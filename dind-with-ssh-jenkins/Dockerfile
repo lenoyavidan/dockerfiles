@@ -31,7 +31,7 @@ EXPOSE 22
 
 #### tehranian/dind-jenkins-slave
 # Install Docker from test Docker repositories.
-RUN curl -sSL https://get.docker.com/ubuntu/ | sh # 1.6 Final
+RUN curl -sSL https://get.docker.com/ubuntu/ | sh
 
 ADD wrapdocker /usr/local/bin/wrapdocker
 RUN chmod +x /usr/local/bin/wrapdocker
