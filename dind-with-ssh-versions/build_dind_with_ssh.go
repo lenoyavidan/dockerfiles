@@ -232,6 +232,8 @@ func BuildVersion(version string) (image string, err error) {
 	// add something to change tag name for experimental versions since its name needs to be split so the proper tag name can be retrieved
 	if name == "experimental" {
 		image = fmt.Sprintf("%s/%s:%s", namespace, repo, strings.Split(version, "~")[0])
+	} else if name == "testing" && !strings.Contains(version, "rc") {
+		image = fmt.Sprintf("%s/%s:%s", namespace, repo, version + "-rc1")
 	} else {
 		image = fmt.Sprintf("%s/%s:%s", namespace, repo, version)
 	}
@@ -272,18 +274,18 @@ func main() {
 
 	// if a specific version is specified to be built, set it up so it is the version to be built
 	if FindString(versions, vers) >= 0 {
-		if FindString(list, vers) < 0 {
-			versions[0] = vers
-		} else {
-			fmt.Printf("specified version %s has already been built and pushed\n", vers)
-			return
-		}
+		versions[0] = vers
 	} else if vers != "" {
 		fmt.Printf("specified version %s not available to build\n", vers)
 		return
 	}
 
 	for _, v := range versions {
+		changed := "false"
+		if name == "testing" && !strings.Contains(v, "rc") {
+			changed = v
+			v += "-rc1"
+		}
 		// test to see if the version has already been built
 		// the second test in the if statement is for experimental since its string has to be handled differently
 		if FindString(list, v) < 0 && FindString(list, strings.Split(v, "~")[0]) < 0 {
@@ -295,6 +297,9 @@ func main() {
 			}
 			
 			fmt.Printf("building docker-engine version %s\n", v)
+			if changed != "false" {
+				v = changed
+			}
 			image, err := BuildVersion(v) // build version
 			if err != nil {
 				fmt.Println("build failed")
@@ -305,14 +310,12 @@ func main() {
 				if name == "main" {
 					retag = fmt.Sprintf("%s/%s:latest", namespace, repo)	
 					fmt.Printf("pushing latest to %s/%s\n", namespace, repo)
-				}
-				if name == "testing" {
+				} else if name == "testing" {
 					retag = fmt.Sprintf("%s/%s:rc-latest", namespace, repo)	
-					fmt.Printf("pushing dev-latest to %s/%s\n", namespace, repo)
-				}
-				if name == "experimental" {
-					retag = fmt.Sprintf("%s/%s:dev-latest", namespace, repo)	
 					fmt.Printf("pushing rc-latest to %s/%s\n", namespace, repo)
+				} else if name == "experimental" {
+					retag = fmt.Sprintf("%s/%s:dev-latest", namespace, repo)	
+					fmt.Printf("pushing dev-latest to %s/%s\n", namespace, repo)
 				}
 				err = exec.Command("sudo", "docker", "tag", "-f", image, retag).Run() // tag the image as a type of latest
 				if err != nil {
@@ -325,6 +328,9 @@ func main() {
 					log.Fatal(err)
 				}
 			}
+			if name == "experimental" {
+				break
+			} 
 			fmt.Printf("pushing docker-engine version %s to %s/%s\n", v, namespace, repo)
 			err = exec.Command("sudo", "docker", "push", image).Run() // push the image
 			if err != nil {
@@ -333,7 +339,10 @@ func main() {
 			}
 			break
 		} else {
-			fmt.Printf("version %s already built\n", v)
+			fmt.Printf("version %s already built and pushed\n", v)
+			if vers != "" {
+				break
+			}
 		}
 	} 
 }
