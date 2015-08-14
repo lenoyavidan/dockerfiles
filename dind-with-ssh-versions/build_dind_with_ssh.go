@@ -35,6 +35,8 @@ import (
  * 3. REPO: the proper dockerhub repo
  * 4. PASSWORD: the password for your dockerhub namespace
  * 5. EMAIL: the email account for your dockerhub namespace
+ * There is also an optional 6th variable that must be unset if it isn't going to be used
+ * 6. VERSION_NUMBER: the specific version of the specified VERSION_TYPE that will be built if available
  */
 
 var (
@@ -209,14 +211,16 @@ func AvailableVersions(build string) (versions []string, err error) {
  */
 func BuildVersion(version string) (image string, err error) {
 	output, err := exec.Command("curl", "-sS", "https://raw.githubusercontent.com/lenoyavidan/dockerfiles/master/dind-with-ssh-jenkins/Dockerfile").CombinedOutput()
-	if err != nil {
-                log.Fatal(err)
-        }
-	file, err := os.Create("Dockerfile")
-	_, err = file.Write(output)
-	if err != nil {
-                log.Fatal(err)
-        }
+	if err != nil { return }
+	dockerfile, err := os.Create("Dockerfile")
+	_, err = dockerfile.Write(output)
+	if err != nil { return }
+	
+	output, err = exec.Command("curl", "-sS", "https://raw.githubusercontent.com/jpetazzo/dind/master/wrapdocker").CombinedOutput()
+	if err != nil { return }
+	wrapdocker, err := os.Create("wrapdocker")
+	_, err = wrapdocker.Write(output)
+	if err != nil { return }
 
 	err = exec.Command("sed", "-i", fmt.Sprintf("/RUN curl/ i\\ENV TYPE %s", name), "Dockerfile").Run()
 	if err != nil { return }
@@ -239,6 +243,34 @@ func BuildVersion(version string) (image string, err error) {
 	}
 	err = exec.Command("sudo", "docker", "build", "-t", image, ".").Run()
 	if err != nil { return }
+
+	return
+}
+
+/*
+ * This function uses the docker run command to check that the image can run as a container and
+ * that the version of docker it is running on matches the passed in version
+ * Parameter: the string representing the name and tag of the image to be run and checked
+ * Return 1: A boolean value that is true if the image built correctly and the versions match,
+ * otherwise it is false
+ * Return 2: An error that is nil if no errors occured
+ */
+func BuildWorks(image string) (works bool, err error) {
+	works = false
+	output, err := exec.Command("sudo", "docker", "run", "--rm", "--privileged", "-e", "LOG=file", image, "bash", "-c", "(/usr/local/bin/wrapdocker &);sleep 5;docker version").CombinedOutput()
+	if err != nil { return }
+
+	arr := strings.Fields(string(output)) // divide up the output into an array of strings to get the individual string values to check with
+	for i, v := range arr {
+		if v == "Version:" || v == "version:" && (arr[i - 1] == "Server" || arr[i - 1] == "Client") { // the first test is for docker versions 1.8.0 and later, the rest of the tests are a work around to test the 1.7.0 and 1.7.1 versions
+			version := arr[i + 1]
+			if version == strings.Split(image, ":")[1] { // checking that the version numbers match
+				works = true
+			} else {
+				return false, nil
+			}
+		}
+	} 
 
 	return
 }
@@ -305,6 +337,18 @@ func main() {
 				fmt.Println("build failed")
 				log.Fatal(err)
 			}
+
+			img := image
+			if changed != "false" { 
+				img = fmt.Sprintf("%s/%s:%s", namespace, repo, v) // needed for when the version is in testing and doesn't have -rc#
+			}
+			works, err := BuildWorks(img) // returns true if image works and has correct docker version
+			if err != nil || !works {
+				fmt.Printf("image %s not built properly\n", image)
+				log.Fatal(err)
+			}
+			fmt.Println("build succeeded")
+
 			if v == latest {
 				var retag string
 				if name == "main" {
